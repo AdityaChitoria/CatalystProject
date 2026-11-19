@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalyst Trust Network</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script>
+  tailwind.config = {
+    theme: { extend: { fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['JetBrains Mono', 'ui-monospace', 'monospace'] } } }
+  };
+</script>
+<style>
+  :root { color-scheme: dark; }
+  body { background: #0b0f17; background-image: radial-gradient(1200px 500px at 85% -10%, rgba(56,189,248,.07), transparent), radial-gradient(900px 400px at -10% 0%, rgba(168,85,247,.06), transparent); }
+  .panel { background: rgba(17,24,39,.8); border: 1px solid #1f2937; border-radius: 14px; }
+  .field { background: #0b1220; border: 1px solid #243044; border-radius: 8px; padding: .5rem .65rem; font-size: .85rem; color: #e5e7eb; width: 100%; outline: none; }
+  .field:focus { border-color: #38bdf8; box-shadow: 0 0 0 3px rgba(56,189,248,.15); }
+  .lbl { display: block; font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; color: #8b98ad; margin-bottom: .25rem; }
+  .btn { border-radius: 8px; padding: .5rem .9rem; font-size: .85rem; font-weight: 600; transition: all .15s; display: inline-flex; align-items: center; gap: .5rem; justify-content: center; }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .btn-primary { background: #0ea5e9; color: #04111c; } .btn-primary:hover:not(:disabled) { background: #38bdf8; }
+  .btn-danger { background: #f43f5e; color: #1a0208; } .btn-danger:hover:not(:disabled) { background: #fb7185; }
+  .btn-ghost { background: #111a2b; border: 1px solid #2a3a55; color: #cbd5e1; } .btn-ghost:hover:not(:disabled) { background: #18243a; }
+  .badge { font-family: 'JetBrains Mono', monospace; font-size: .72rem; font-weight: 700; padding: .2rem .55rem; border-radius: 6px; border: 1px solid; letter-spacing: .02em; white-space: nowrap; }
+  .b-green { color: #4ade80; background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.4); }
+  .b-red   { color: #fb7185; background: rgba(244,63,94,.12); border-color: rgba(244,63,94,.45); }
+  .b-amber { color: #fbbf24; background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.45); }
+  .b-blue  { color: #60a5fa; background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.45); }
+  .b-slate { color: #94a3b8; background: rgba(100,116,139,.12); border-color: rgba(100,116,139,.4); }
+  .b-violet{ color: #c4b5fd; background: rgba(139,92,246,.14); border-color: rgba(139,92,246,.45); }
+  .card-green { border-left: 3px solid #22c55e; } .card-red { border-left: 3px solid #f43f5e; }
+  .card-amber { border-left: 3px solid #f59e0b; } .card-blue { border-left: 3px solid #3b82f6; }
+  .spinner { width: 1em; height: 1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .rise { animation: rise .35s ease both; }
+  #graph { height: 440px; background: radial-gradient(circle at 50% 50%, #0f1a2e, #0a0f1a); border-radius: 10px; border: 1px solid #1f2937; }
+  .brief { white-space: pre-wrap; font-family: 'JetBrains Mono', monospace; font-size: .76rem; line-height: 1.5; color: #cbd5e1; background: #080d16; border: 1px solid #1c2638; border-radius: 8px; padding: .7rem; }
+  .switch { position: relative; width: 44px; height: 24px; background: #334155; border-radius: 999px; transition: background .2s; cursor: pointer; flex: none; }
+  .switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #e2e8f0; transition: transform .2s; }
+  input:checked + .switch { background: #8b5cf6; } input:checked + .switch::after { transform: translateX(20px); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+</style>
+</head>
+<body class="font-sans text-slate-200 min-h-screen">
+
+<!-- ============ Header ============ -->
+<header class="sticky top-0 z-30 backdrop-blur bg-[#0b0f17]/85 border-b border-slate-800">
+  <div class="max-w-[1500px] mx-auto px-4 py-3 flex flex-wrap items-center gap-x-5 gap-y-3">
+    <div class="flex items-center gap-3 mr-auto">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-400 to-violet-500 grid place-items-center text-slate-950 font-black">C</div>
+      <div>
+        <h1 class="text-base font-bold leading-tight">Catalyst <span class="text-slate-500 font-medium">/ Decentralized Trust Network</span></h1>
+        <p class="text-[11px] text-slate-500 leading-tight">Evidence-based defense against AI-slop contributions</p>
+      </div>
+    </div>
+
+    <div id="statusPill" class="badge b-slate flex items-center gap-2"><span class="dot bg-slate-500"></span><span>connecting…</span></div>
+
+    <label class="flex items-center gap-2 cursor-pointer select-none" title="Off = deterministic offline mock brief. On = live LLM summary (needs .env).">
+      <span id="lblMock" class="text-xs font-semibold text-slate-200">Offline Mock</span>
+      <input id="liveToggle" type="checkbox" class="sr-only">
+      <span class="switch"></span>
+      <span id="lblLive" class="text-xs font-semibold text-slate-500">Live LLM</span>
+    </label>
+
+    <button id="resetBtn" class="btn btn-ghost" title="POST /api/reset — clears the campaign detector"><span id="resetIcon">↺</span> Reset State</button>
+  </div>
+  <div id="errorBanner" class="hidden bg-rose-950/80 border-t border-rose-800 text-rose-200 text-sm px-4 py-2">
+    <div class="max-w-[1500px] mx-auto flex items-start gap-3">
+      <span class="font-bold">⚠</span><div id="errorText" class="flex-1 break-words"></div>
+      <button id="errorClose" class="text-rose-300 hover:text-white font-bold" aria-label="Dismiss">✕</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-[1500px] mx-auto px-4 py-5 grid gap-5 lg:grid-cols-5">
+
+  <!-- ============ Left column: Panel 1 + Panel 3 ============ -->
+  <div class="lg:col-span-3 flex flex-col gap-5 min-w-0">
+
+    <!-- Panel 1: Trust graph -->
+    <section class="panel p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-bold tracking-wide">① Interactive Trust Graph</h2>
+        <div class="flex gap-3 text-[11px] text-slate-400">
+          <span><span class="dot bg-sky-400"></span> querying</span>
+          <span><span class="dot bg-emerald-400"></span> reachable</span>
+          <span><span class="dot bg-rose-400"></span> denounces</span>
+          <span><span class="dot bg-slate-600"></span> unreachable</span>
+        </div>
+      </div>
+
+      <div class="grid sm:grid-cols-[1fr_1fr_auto] gap-3 mb-3 items-end">
+        <div><label class="lbl" for="qProject">Querying Project</label><select id="qProject" class="field"></select></div>
+        <div><label class="lbl" for="qUser">Check Contributor</label><input id="qUser" class="field font-mono" placeholder="e.g. alice or github:alice" autocomplete="off"></div>
+        <button id="evalBtn" class="btn btn-primary">Evaluate</button>
+      </div>
+
+      <div class="relative">
+        <div id="graph"></div>
+        <div id="graphLoading" class="absolute inset-0 grid place-items-center text-slate-400 text-sm"><span class="spinner mr-2"></span> Loading network…</div>
+      </div>
+      <p class="text-[11px] text-slate-500 mt-2">Edge labels are trust weights (source → target). Node size reflects vouches recorded by that project. Click a node to set it as the querying project.</p>
+
+      <div id="evalResult" class="mt-3 hidden"></div>
+    </section>
+
+    <!-- Panel 3: Sandbox -->
+    <section class="panel p-4">
+      <h2 class="text-sm font-bold tracking-wide mb-3">③ Custom PR Sandbox</h2>
+      <form id="prForm" class="grid gap-3 sm:grid-cols-6">
+        <div class="sm:col-span-2"><label class="lbl" for="prRepo">Repo</label><select id="prRepo" class="field"></select></div>
+        <div class="sm:col-span-2"><label class="lbl" for="prId">PR ID</label><input id="prId" class="field font-mono" value="501" required></div>
+        <div class="sm:col-span-2"><label class="lbl" for="prAuthor">Author</label><input id="prAuthor" class="field font-mono" value="mystery_dev" required autocomplete="off"></div>
+        <div class="sm:col-span-6"><label class="lbl" for="prTitle">Title</label><input id="prTitle" class="field" value="Fix typo in README" required></div>
+        <div class="sm:col-span-6"><label class="lbl" for="prBody">Body</label><textarea id="prBody" rows="2" class="field">Fixed a small typo in the README file.</textarea></div>
+        <div class="sm:col-span-4"><label class="lbl" for="prFiles">Files Changed (comma or newline separated)</label><input id="prFiles" class="field font-mono" value="README.md"></div>
+        <div class="sm:col-span-2 flex items-end"><button id="prBtn" type="submit" class="btn btn-primary w-full">Submit PR</button></div>
+      </form>
+    </section>
+  </div>
+
+  <!-- ============ Right column: Panel 2 ============ -->
+  <section class="lg:col-span-2 panel p-4 min-w-0 flex flex-col">
+    <div class="flex items-center justify-between mb-3 gap-2">
+      <h2 class="text-sm font-bold tracking-wide">② Live PR Stream</h2>
+      <span id="streamCount" class="badge b-slate">0 PRs</span>
+    </div>
+    <button id="waveBtn" class="btn btn-danger w-full mb-1">⚡ Simulate 4-Bot Spam Wave + Newcomer</button>
+    <p id="waveHint" class="text-[11px] text-slate-500 mb-3">Resets campaign state, then replays 4 near-identical bot PRs across 4 repos and 1 genuine newcomer.</p>
+    <div id="stream" class="flex flex-col gap-3">
+      <div id="streamEmpty" class="text-center text-slate-500 text-sm border border-dashed border-slate-700 rounded-lg py-10">No PRs yet — run the spam wave or submit one from the sandbox.</div>
+    </div>
+  </section>
+</main>
+
+<footer class="text-center text-[11px] text-slate-600 pb-6">Verdicts are always computed deterministically (graph + campaign detector). The LLM only summarizes verified facts.</footer>
+
+<script>
+"use strict";
+/* ------------------------------------------------------------------ *
+ * Catalyst dashboard — vanilla JS. Same-origin API (served by FastAPI).
+ * Override with ?api=http://host:port when opening the file directly.
+ * ------------------------------------------------------------------ */
+const API = (new URLSearchParams(location.search).get("api") || "").replace(/\/$/, "");
+const $ = (id) => document.getElementById(id);
+const state = { health: null, projects: [], network: null, vis: null, streamCount: 0 };
+
+/* ---------- tiny helpers ---------- */
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+}
+const fmt = (n, d = 2) => (typeof n === "number" ? n.toFixed(d) : "—");
+
+function showError(msg) { $("errorText").textContent = msg; $("errorBanner").classList.remove("hidden"); }
+function clearError() { $("errorBanner").classList.add("hidden"); }
+$("errorClose").onclick = clearError;
+
+async function api(path, opts = {}) {
+  let res;
+  try {
+    res = await fetch(API + path, {
+      headers: opts.body ? { "Content-Type": "application/json" } : undefined, ...opts,
+    });
+  } catch (e) {
+    throw new Error(`Cannot reach the API at ${API || location.origin}${path}. Is uvicorn running? (${e.message})`);
+  }
+  let data = null;
+  try { data = await res.json(); } catch (_) { /* non-JSON body */ }
+  if (!res.ok) {
+    let detail = data && data.detail;
+    if (Array.isArray(detail)) detail = detail.map((d) => `${(d.loc || []).slice(1).join(".")}: ${d.msg}`).join("; ");
+    throw new Error(`${res.status} ${path}: ${detail || res.statusText}`);
+  }
+  return data;
+}
+
+function setBusy(btn, busy, label) {
+  if (busy) { btn.dataset.label = btn.innerHTML; btn.disabled = true; btn.innerHTML = `<span class="spinner"></span> ${label || "Working…"}`; }
+  else { btn.disabled = false; if (btn.dataset.label) btn.innerHTML = btn.dataset.label; }
+}
+
+const useMock = () => !$("liveToggle").checked;
+
+/* ---------- verdict styling ---------- */
+function verdictStyle(v) {
+  const s = String(v || "").toUpperCase();
+  if (s.startsWith("ALLOW")) return { c: "green", icon: "✓" };
+  if (s.startsWith("BLOCKED")) return { c: "red", icon: "⛔" };
+  if (s.startsWith("REVIEW")) return { c: "amber", icon: "⚠" };
+  if (s.startsWith("NEWCOMER")) return { c: "blue", icon: "◔" };
+  return { c: "slate", icon: "•" };
+}
+const statusStyle = (s) => ({ trusted: "green", low_trust: "green", blocked: "red", warning: "amber", unknown: "blue" }[s] || "slate");
+const provStyle = (src) => ({ live: "violet", fallback: "amber", mock: "slate" }[src] || "slate");
+
+/* ---------- header: health + toggle + reset ---------- */
+async function refreshHealth() {
+  const pill = $("statusPill");
+  try {
+    const h = await api("/api/health");
+    state.health = h;
+    pill.className = "badge b-green flex items-center gap-2";
+    pill.innerHTML = "";
+    pill.append(el("span", "dot bg-emerald-400"),
+      el("span", "", `${h.status.toUpperCase()} · ${h.projects_loaded} projects · ${h.live_llm_configured ? "Live LLM configured" : "Live LLM not configured"}`));
+    $("liveToggle").title = h.live_llm_configured ? "" : "Live LLM is not configured — briefs will fall back to the offline mock.";
+    return true;
+  } catch (e) {
+    pill.className = "badge b-red flex items-center gap-2";
+    pill.innerHTML = "";
+    pill.append(el("span", "dot bg-rose-400"), el("span", "", "API unreachable"));
+    showError(e.message);
+    return false;
+  }
+}
+
+function syncToggleLabels() {
+  const live = $("liveToggle").checked;
+  $("lblMock").className = "text-xs font-semibold " + (live ? "text-slate-500" : "text-slate-200");
+  $("lblLive").className = "text-xs font-semibold " + (live ? "text-violet-300" : "text-slate-500");
+  if (live && state.health && !state.health.live_llm_configured)
+    showError("Live LLM is not configured on the server (set LLM_* in .env). Briefs will fall back to the offline mock and be tagged accordingly.");
+}
+$("liveToggle").addEventListener("change", syncToggleLabels);
+
+$("resetBtn").onclick = async () => {
+  const b = $("resetBtn"); setBusy(b, true, "Resetting…");
+  try { await api("/api/reset", { method: "POST" }); clearError(); clearStream(); }
+  catch (e) { showError(e.message); }
+  finally { setBusy(b, false); }
+};
+
+/* ---------- Panel 1: graph ---------- */
+const COLORS = {
+  base: { background: "#1e3a5f", border: "#38bdf8" },
+  dim: { background: "#161e2c", border: "#334155" },
+  query: { background: "#0369a1", border: "#38bdf8" },
+  reach: { background: "#065f46", border: "#34d399" },
+  deny: { background: "#7f1d1d", border: "#fb7185" },
+};
+
+function nodeSize(n) { return 16 + Math.min(n.vouched_count, 40) * 0.6; }
+
+function initGraph(net) {
+  const nodes = new vis.DataSet(net.nodes.map((n) => ({
+    id: n.id, label: n.id, size: nodeSize(n), shape: "dot", color: COLORS.base, borderWidth: 2,
+    font: { color: "#e2e8f0", face: "JetBrains Mono", size: 13 },
+    title: `${n.id}\nvouches: ${n.vouched_count}\ndenouncements: ${n.denounced_count}`,
+  })));
+  const edges = new vis.DataSet(net.edges.map((e, i) => ({
+    id: i, from: e.source, to: e.target, label: fmt(e.weight),
+    arrows: { to: { enabled: true, scaleFactor: 0.7 } },
+    width: 1 + e.weight * 3, color: { color: "#475569", highlight: "#38bdf8", opacity: 0.9 },
+    font: { color: "#94a3b8", size: 11, strokeWidth: 3, strokeColor: "#0a0f1a", align: "middle" },
+    smooth: { type: "curvedCW", roundness: 0.18 },
+  })));
+  state.vis = { nodes, edges, network: new vis.Network($("graph"), { nodes, edges }, {
+    physics: { solver: "forceAtlas2Based", forceAtlas2Based: { gravitationalConstant: -70, springLength: 150 }, stabilization: { iterations: 200 } },
+    interaction: { hover: true, tooltipDelay: 150 },
+  }) };
+  state.vis.network.on("click", (p) => { if (p.nodes.length) { $("qProject").value = p.nodes[0]; } });
+  state.vis.network.once("stabilizationIterationsDone", () => state.vis.network.fit({ animation: true }));
+}
+
+function resetHighlight() {
+  if (!state.vis) return;
+  state.vis.nodes.update(state.network.nodes.map((n) => ({ id: n.id, color: COLORS.base, opacity: 1, borderWidthSelected: 3, shapeProperties: { borderDashes: false } })));
+  state.vis.edges.update(state.network.edges.map((e, i) => ({ id: i, color: { color: "#475569", opacity: 0.9 }, width: 1 + e.weight * 3 })));
+}
+
+function highlight(v) {
+  if (!state.vis) return;
+  const reach = v.project_trust || {};
+  const denySet = new Set((v.denounced_by || []).map((d) => d[0]));
+  const vouchSet = new Set((v.vouched_by || []).map((d) => d[0]));
+  const ignored = new Set(v.ignored_projects || []);
+  state.vis.nodes.update(state.network.nodes.map((n) => {
+    let color = COLORS.dim, opacity = 0.45, dashes = false, label = n.id;
+    if (n.id === v.querying_project) { color = COLORS.query; opacity = 1; }
+    else if (denySet.has(n.id)) { color = COLORS.deny; opacity = 1; }
+    else if (n.id in reach) { color = COLORS.reach; opacity = 1; }
+    if (ignored.has(n.id)) { dashes = true; label = n.id + "\n(ignored)"; }
+    if (vouchSet.has(n.id)) label = n.id + "\n✓ vouches";
+    if (denySet.has(n.id)) label = n.id + "\n✗ denounces";
+    if (n.id in reach && n.id !== v.querying_project) label += `\ntrust ${fmt(reach[n.id])}`;
+    return { id: n.id, color, opacity, label, shapeProperties: { borderDashes: dashes ? [4, 3] : false } };
+  }));
+  const live = (id) => id === v.querying_project || id in reach;
+  state.vis.edges.update(state.network.edges.map((e, i) => {
+    const on = live(e.source) && live(e.target);
+    return { id: i, color: { color: on ? "#34d399" : "#273244", opacity: on ? 1 : 0.35 }, width: on ? 1.5 + e.weight * 3 : 1 };
+  }));
+}
+
+function renderEval(v) {
+  const box = $("evalResult"); box.innerHTML = ""; box.classList.remove("hidden");
+  const card = el("div", "rounded-lg border border-slate-700 bg-slate-900/60 p-3 rise");
+  const head = el("div", "flex flex-wrap items-center gap-2 mb-2");
+  head.append(
+    el("span", "badge b-" + statusStyle(v.status), v.status.toUpperCase()),
+    el("span", "font-mono text-sm text-slate-200", v.username),
+    el("span", "text-xs text-slate-500", `as seen by ${v.querying_project}`),
+    el("span", "badge b-green ml-auto", `vouch ${fmt(v.vouch_score)}`),
+    el("span", "badge b-red", `denounce ${fmt(v.denounce_score)}`),
+  );
+  card.append(head, el("p", "text-sm text-slate-300", v.explanation));
+  const rows = [];
+  if (v.vouched_by.length) rows.push(["Vouched by", v.vouched_by.map(([p, w]) => `${p} (${fmt(w)})`).join(", ")]);
+  if (v.denounced_by.length) rows.push(["Denounced by", v.denounced_by.map(([p, w, r]) => `${p} (${fmt(w)})${r ? ` — “${r}”` : ""}`).join("; ")]);
+  if (v.ignored_projects.length) rows.push(["Ignored projects", v.ignored_projects.join(", ")]);
+  rows.push(["Reachable trust", Object.keys(v.project_trust).length ? Object.entries(v.project_trust).map(([p, t]) => `${p} ${fmt(t)}`).join(" · ") : "none"]);
+  const dl = el("dl", "mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs");
+  rows.forEach(([k, val]) => { dl.append(el("dt", "text-slate-500", k), el("dd", "text-slate-300 font-mono break-words", val)); });
+  card.append(dl); box.append(card);
+}
+
+async function evaluate() {
+  const project = $("qProject").value, username = $("qUser").value.trim();
+  if (!username) { $("qUser").focus(); return; }
+  const b = $("evalBtn"); setBusy(b, true, "Checking…");
+  try {
+    const v = await api(`/api/evaluate?project=${encodeURIComponent(project)}&username=${encodeURIComponent(username)}`);
+    clearError(); renderEval(v); highlight(v);
+  } catch (e) { showError(e.message); }
+  finally { setBusy(b, false); }
+}
+$("evalBtn").onclick = evaluate;
+$("qUser").addEventListener("keydown", (e) => { if (e.key === "Enter") evaluate(); });
+$("qProject").addEventListener("change", () => { if ($("qUser").value.trim()) evaluate(); else resetHighlight(); });
+
+async function loadNetwork() {
+  try {
+    const net = await api("/api/network");
+    state.network = net; state.projects = net.nodes.map((n) => n.id);
+    for (const sel of [$("qProject"), $("prRepo")]) {
+      sel.innerHTML = ""; state.projects.forEach((p) => sel.append(new Option(p, p)));
+    }
+    if (state.projects.includes("my_project")) $("qProject").value = "my_project";
+    if (state.projects.includes("ghostty")) $("prRepo").value = "ghostty";
+    $("graphLoading").classList.add("hidden");
+    initGraph(net);
+  } catch (e) { $("graphLoading").textContent = "Network unavailable."; showError(e.message); }
+}
+
+/* ---------- Panels 2 & 3: PR cards ---------- */
+const EMPTY_STATE = $("streamEmpty");  // keep a reference: clearing #stream detaches it from the DOM
+function clearStream() {
+  $("stream").innerHTML = ""; $("stream").append(EMPTY_STATE); EMPTY_STATE.classList.remove("hidden");
+  state.streamCount = 0; updateCount();
+}
+const updateCount = () => { $("streamCount").textContent = `${state.streamCount} PR${state.streamCount === 1 ? "" : "s"}`; };
+
+function renderCard(r, delayMs = 0) {
+  const vs = verdictStyle(r.final_verdict), gv = r.graph_verdict, c = r.campaign, br = r.brief;
+  const card = el("article", `rounded-xl bg-slate-900/70 border border-slate-800 card-${vs.c} p-3 rise`);
+  card.style.animationDelay = delayMs + "ms";
+
+  const top = el("div", "flex flex-wrap items-center gap-2");
+  top.append(
+    el("span", "font-mono text-sm font-semibold text-slate-100", `${r.repo} #${r.pr_id}`),
+    el("span", "text-xs text-slate-400", "by "), el("span", "font-mono text-xs text-slate-200 -ml-1.5", r.author),
+    el("span", `badge b-${vs.c} ml-auto`, `${vs.icon} ${r.final_verdict}`),
+  );
+
+  const meta = el("div", "flex flex-wrap items-center gap-2 mt-2");
+  const prov = el("span", `badge b-${provStyle(br.source)}`, br.tag);
+  prov.title = br.status_line || br.tag;
+  meta.append(prov, el("span", `badge b-${statusStyle(gv.status)}`, `graph: ${gv.status}`),
+    el("span", "text-[11px] text-slate-500 font-mono", `vouch ${fmt(gv.vouch_score)} · denounce ${fmt(gv.denounce_score)}`));
+  if (br.status_line && br.status_line !== br.tag) meta.append(el("div", "w-full text-[11px] text-amber-300/80", br.status_line));
+
+  const brief = el("div", "mt-3");
+  brief.append(el("div", "lbl", "Evidence Brief"), el("div", "brief", br.text));
+
+  const camp = el("div", "mt-3 rounded-lg border p-2.5 text-xs " + (c.is_campaign ? "border-rose-800/70 bg-rose-950/30" : "border-slate-800 bg-slate-950/40"));
+  const ch = el("div", "flex flex-wrap items-center gap-2");
+  ch.append(el("span", "lbl !mb-0", "PR Cluster"),
+    el("span", `badge b-${c.is_campaign ? "red" : "slate"}`, c.is_campaign ? "CAMPAIGN DETECTED" : "no campaign"),
+    el("span", "text-slate-400 font-mono", `size ${c.cluster_size} · repos ${c.distinct_repos} · window ${fmt(c.window_hours, 1)}h · sim ≥ ${fmt(c.similarity_threshold)}`));
+  camp.append(ch);
+  if (c.matching_prs && c.matching_prs.length) {
+    const chips = el("div", "flex flex-wrap gap-1.5 mt-2");
+    c.matching_prs.forEach((k) => chips.append(el("span", "badge b-slate !font-medium", k)));
+    camp.append(chips);
+  }
+
+  card.append(top, meta, brief, camp);
+  if (gv.explanation) card.append(el("p", "mt-2 text-[11px] text-slate-500", "Graph: " + gv.explanation));
+  return card;
+}
+
+function appendCards(results, stagger) {
+  EMPTY_STATE.classList.add("hidden");
+  results.forEach((r, i) => $("stream").append(renderCard(r, stagger ? i * 140 : 0)));
+  state.streamCount += results.length; updateCount();
+}
+
+$("waveBtn").onclick = async () => {
+  const b = $("waveBtn"), mock = useMock();
+  setBusy(b, true, mock ? "Simulating…" : "Calling Live LLM (this can take a while)…");
+  try {
+    const results = await api("/api/simulate/spam-wave", { method: "POST", body: JSON.stringify({ use_mock: mock }) });
+    clearError(); clearStream(); appendCards(results, true);
+  } catch (e) { showError(e.message); }
+  finally { setBusy(b, false); }
+};
+
+$("prForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const idRaw = $("prId").value.trim();
+  const files = $("prFiles").value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+  const mock = useMock();
+  const payload = {
+    repo: $("prRepo").value,
+    pr_id: /^\d+$/.test(idRaw) ? Number(idRaw) : idRaw,
+    author: $("prAuthor").value.trim(),
+    title: $("prTitle").value,
+    body: $("prBody").value,
+    files_changed: files,
+    use_mock: mock,
+  };
+  const b = $("prBtn"); setBusy(b, true, mock ? "Submitting…" : "Live LLM…");
+  try {
+    const r = await api("/api/pr/submit", { method: "POST", body: JSON.stringify(payload) });
+    clearError(); appendCards([r], false);
+    $("stream").lastElementChild.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } catch (e) { showError(e.message); }
+  finally { setBusy(b, false); }
+});
+
+/* ---------- boot ---------- */
+(async function boot() {
+  syncToggleLabels();
+  if (await refreshHealth()) await loadNetwork();
+  else $("graphLoading").textContent = "API unreachable.";
+  setInterval(async () => { const ok = await refreshHealth(); if (ok && !state.network) { clearError(); loadNetwork(); } }, 15000);
+})();
+</script>
+</body>
+</html>

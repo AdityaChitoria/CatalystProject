@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -380,3 +381,10 @@ def reset() -> ResetResponse:
     with _detector_lock:
         _detector = CampaignDetector()
     return ResetResponse(status="reset")
+
+FRONTEND_INDEX = PROJECT_ROOT / "frontend" / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+def dashboard() -> FileResponse:
+    return FileResponse(FRONTEND_INDEX, media_type="text/html")
