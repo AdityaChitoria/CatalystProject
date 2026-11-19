@@ -75,6 +75,10 @@ CatalystProject/
 │
 ├── .gitignore
 └── README.md
+├── requirements.txt  
+├── pytest.ini         
+├── setup_venv.sh        
+└── setup_venv.bat
 ```
 
 ---
