@@ -52,10 +52,13 @@ CatalystProject/
 │   │   │   ├── parser.py
 │   │   │   └── network_loader.py
 │   │   │
-│   │   └── reporting/
-│   │       └── brief_generator.py
+│   │   ├──reporting/
+│   │   |    └── brief_generator.py
+│   │   │   
+│   │   └──main.py
 │   │
 │   └── tests/
+|       ├── test_api.py
 │       ├── test_engine.py
 │       ├── test_network_loader.py
 │       ├── test_campaign_detector.py
