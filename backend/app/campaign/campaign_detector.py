@@ -1,247 +1,109 @@
 """
-campaign_detector.py - Privacy-preserving cross-project spam campaign detector.
+campaign.py - Privacy-preserving cross-project spam campaign detector (Q6).
 
-Stores per PR:
-- Repository name
-- PR ID
-- Keyed author hash
-- Timestamp
-- Keyed structural fingerprint
+What is stored per PR:  repo name, PR id, a salted hash of the author handle,
+a timestamp, and a structural fingerprint (MinHash signature + hashed file set).
+What is NEVER stored:   raw title/body text, IPs, emails, or any account metadata.
 
-Never stores raw PR title/body text, IPs, emails, or raw author handles.
+Detection is 100% deterministic (shingling + Jaccard/MinHash + a sliding time
+window). No model is asked about intent or about whether text was AI-written.
 """
 
 import hashlib
 import math
-import os
 import re
 import string
 from dataclasses import dataclass, field
 
-
 _PUNCT_TABLE = str.maketrans({c: " " for c in string.punctuation})
 
-MAX_PERMUTATIONS = 256
+
+def _is_int(value):
+    """True for real ints only (bool is an int subclass, so exclude it)."""
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def normalize_text(text):
     """Lowercase, replace punctuation with spaces, collapse whitespace."""
-    if text is None:
-        return ""
-
-    if not isinstance(text, str):
-        raise ValueError("text must be a string")
-
-    text = text.lower().translate(_PUNCT_TABLE)
+    text = (text or "").lower().translate(_PUNCT_TABLE)
     return re.sub(r"\s+", " ", text).strip()
 
 
 def normalize_path(path):
-    """Normalize changed-file paths."""
-    if path is None:
-        return ""
-
-    if not isinstance(path, str):
-        raise ValueError("path must be a string")
-
-    return path.strip().lower().lstrip("./")
+    """Normalize a changed-file path so 'README.md' and './readme.md' match."""
+    return (path or "").strip().lower().lstrip("./")
 
 
 def char_shingles(text, k=3):
-    """Generate character k-grams."""
-
-    if not isinstance(text, str):
-        raise ValueError("text must be a string")
-
-    if (
-        not isinstance(k, int)
-        or isinstance(k, bool)
-        or k <= 0
-    ):
-        raise ValueError("k must be a positive integer")
-
+    """Set of character k-grams. Robust to small rewordings of short text."""
     if len(text) <= k:
         return {text} if text else set()
-
-    return {
-        text[i:i + k]
-        for i in range(len(text) - k + 1)
-    }
+    return {text[i:i + k] for i in range(len(text) - k + 1)}
 
 
-def _validate_num_perm(num_perm):
-    if (
-        not isinstance(num_perm, int)
-        or isinstance(num_perm, bool)
-        or not 1 <= num_perm <= MAX_PERMUTATIONS
-    ):
-        raise ValueError(
-            f"num_perm must be an integer between 1 and {MAX_PERMUTATIONS}"
-        )
-
-
-def _hash64(value, seed, hash_key=None):
-    """Generate a stable seeded 64-bit hash."""
-
-    key = hash_key or b""
-
+def _hash64(value, seed):
+    """Seeded 64-bit hash built on hashlib (dependency-free, stable across runs)."""
     digest = hashlib.blake2b(
-        value.encode("utf-8"),
-        digest_size=8,
-        key=key,
-        person=seed.to_bytes(8, "big")
+        value.encode("utf-8"), digest_size=8, key=seed.to_bytes(8, "big")
     ).digest()
-
     return int.from_bytes(digest, "big")
 
 
-def minhash_signature(shingles, num_perm=64, hash_key=None):
-    """Generate a MinHash signature."""
-
-    _validate_num_perm(num_perm)
-
+def minhash_signature(shingles, num_perm=64):
+    """MinHash signature: for each seed keep the minimum hash over all shingles."""
     if not shingles:
         return tuple([0] * num_perm)
-
-    return tuple(
-        min(
-            _hash64(s, seed, hash_key)
-            for s in shingles
-        )
-        for seed in range(num_perm)
-    )
+    return tuple(min(_hash64(s, seed) for s in shingles) for seed in range(num_perm))
 
 
 def minhash_similarity(sig_a, sig_b):
-    """Estimate Jaccard similarity using MinHash signatures."""
+    """
+    Estimated Jaccard similarity = fraction of matching signature slots.
 
+    A signature with no content (the all-zero sentinel from minhash_signature)
+    never matches anything, including another empty signature.
+    """
     if not sig_a or len(sig_a) != len(sig_b):
         return 0.0
-
-    return sum(
-        1 for a, b in zip(sig_a, sig_b) if a == b
-    ) / len(sig_a)
+    if not any(sig_a) or not any(sig_b):
+        return 0.0
+    return sum(1 for a, b in zip(sig_a, sig_b) if a == b) / len(sig_a)
 
 
 def jaccard(set_a, set_b):
-    """Calculate Jaccard similarity."""
-
-    if not set_a and not set_b:
-        return 0.0
-
+    """Jaccard similarity. Two empty sets have no evidence of overlap -> 0.0."""
     union = len(set_a | set_b)
-
     return len(set_a & set_b) / union if union else 0.0
 
 
 @dataclass(frozen=True)
 class Fingerprint:
-    """Structural fingerprint without raw PR text."""
-
+    """Shareable structural fingerprint. Contains no recoverable PR text."""
     text_sig: tuple
     file_hashes: frozenset
 
 
-def build_fingerprint(
-    title,
-    body,
-    files_changed,
-    num_perm=64,
-    shingle_size=3,
-    hash_key=None
-):
-    """Build a structural fingerprint from PR information."""
-
-    _validate_num_perm(num_perm)
-
-    if not isinstance(title, str):
-        raise ValueError("title must be a string")
-
-    if not isinstance(body, str):
-        raise ValueError("body must be a string")
-
-    if (
-        not isinstance(shingle_size, int)
-        or isinstance(shingle_size, bool)
-        or shingle_size <= 0
-    ):
-        raise ValueError("shingle_size must be a positive integer")
-
-    if not isinstance(files_changed, (list, tuple, set)):
-        raise ValueError("files_changed must be a list, tuple, or set")
-
-    if not all(
-        isinstance(path, str) and path.strip()
-        for path in files_changed
-    ):
-        raise ValueError("All changed file paths must be non-empty strings")
-
-    text = normalize_text(f"{title} {body}")
-
-    text_sig = minhash_signature(
-        char_shingles(text, shingle_size),
-        num_perm,
-        hash_key
-    )
-
+def build_fingerprint(title, body, files_changed, num_perm=64, shingle_size=3):
+    """Normalize title + body + files and build the structural fingerprint."""
+    text = normalize_text(f"{title or ''} {body or ''}")
+    text_sig = minhash_signature(char_shingles(text, shingle_size), num_perm)
     file_hashes = frozenset(
-        hashlib.blake2b(
-            normalize_path(path).encode("utf-8"),
-            digest_size=16,
-            key=hash_key or b""
-        ).hexdigest()
-        for path in files_changed
-        if normalize_path(path)
+        hashlib.blake2b(normalize_path(f).encode("utf-8"), digest_size=8).hexdigest()
+        for f in (files_changed or [])
+        if normalize_path(f)
     )
-
-    return Fingerprint(
-        text_sig=text_sig,
-        file_hashes=file_hashes
-    )
+    return Fingerprint(text_sig=text_sig, file_hashes=file_hashes)
 
 
-def fingerprint_similarity(
-    fp_a,
-    fp_b,
-    text_weight=0.6,
-    file_weight=0.4
-):
-    """Calculate combined text and changed-file similarity."""
-
-    for weight in (text_weight, file_weight):
-        if (
-            not isinstance(weight, (int, float))
-            or isinstance(weight, bool)
-            or not math.isfinite(weight)
-            or weight < 0
-        ):
-            raise ValueError("Similarity weights must be finite and non-negative")
-
-    total_weight = text_weight + file_weight
-
-    if total_weight <= 0:
-        raise ValueError("At least one similarity weight must be positive")
-
-    text_a_empty = not any(fp_a.text_sig)
-    text_b_empty = not any(fp_b.text_sig)
-
-    if text_a_empty or text_b_empty:
-        text_sim = 0.0
-    else:
-        text_sim = minhash_similarity(
-            fp_a.text_sig,
-            fp_b.text_sig
-        )
-
-    file_sim = jaccard(
-        fp_a.file_hashes,
-        fp_b.file_hashes
-    )
-
-    return (
-        text_weight * text_sim +
-        file_weight * file_sim
-    ) / total_weight
+def fingerprint_similarity(fp_a, fp_b, text_weight=0.6, file_weight=0.4):
+    """
+    Blend of text similarity (MinHash) and changed-file overlap (Jaccard).
+    Weighted so that 'same files + similar wording' scores high even when the
+    wording was lightly rephrased, while same files with unrelated text does not.
+    """
+    text_sim = minhash_similarity(fp_a.text_sig, fp_b.text_sig)
+    file_sim = jaccard(fp_a.file_hashes, fp_b.file_hashes)
+    return text_weight * text_sim + file_weight * file_sim
 
 
 @dataclass
@@ -257,302 +119,113 @@ class _PRRecord:
 class CampaignDetector:
     """Cross-project sliding-window campaign detector."""
 
-    def __init__(
-        self,
-        num_perm=64,
-        shingle_size=3,
-        author_salt=None
-    ):
-        _validate_num_perm(num_perm)
-
-        if (
-            not isinstance(shingle_size, int)
-            or isinstance(shingle_size, bool)
-            or shingle_size <= 0
-        ):
+    def __init__(self, num_perm=64, shingle_size=3, author_salt="catalyst-local-salt"):
+        if not _is_int(num_perm) or num_perm < 1:
+            raise ValueError("num_perm must be a positive integer")
+        if not _is_int(shingle_size) or shingle_size < 1:
             raise ValueError("shingle_size must be a positive integer")
-
-        if author_salt is None:
-            author_salt = os.getenv("CAMPAIGN_AUTHOR_SALT")
-
         if not isinstance(author_salt, str) or not author_salt.strip():
-            raise ValueError("author_salt must be configured and non-empty")
-
+            raise ValueError("author_salt must be a non-empty string")
         self.num_perm = num_perm
         self.shingle_size = shingle_size
-
-        self._salt = author_salt.encode("utf-8")
-
-        # Derive a fixed-size key for keyed fingerprint hashing.
-        self._hash_key = hashlib.sha256(self._salt).digest()
-
+        self._salt = author_salt
         self._records = {}
 
     @staticmethod
     def make_key(repo_name, pr_id):
-        """Create a stable repository-specific PR key."""
         return f"{repo_name}#{pr_id}"
 
     def _hash_author(self, author):
-        """Hash author identity without storing the original handle."""
+        """Salted hash: lets us count distinct authors without keeping handles."""
+        return hashlib.sha256(f"{self._salt}:{author}".encode("utf-8")).hexdigest()[:16]
 
-        return hashlib.blake2b(
-            author.encode("utf-8"),
-            digest_size=16,
-            key=self._hash_key
-        ).hexdigest()
-
-    def ingest_pr(
-        self,
-        repo_name,
-        pr_id,
-        author,
-        title,
-        body,
-        files_changed,
-        timestamp_epoch
-    ):
+    def ingest_pr(self, repo_name, pr_id, author, title, body, files_changed, timestamp_epoch):
         """
-        Validate and store PR metadata and its structural fingerprint.
+        Store only metadata + fingerprint. Raw title/body are discarded here.
 
-        Re-ingesting the same repository/PR key updates its record.
+        Raises ValueError for an empty repo name or author, a files_changed that
+        is not a list/tuple/set of strings (None means no files), or a
+        timestamp that is not a finite number.
         """
-
-        if (
-            not isinstance(repo_name, str)
-            or not repo_name.strip()
-            or "#" in repo_name
-            or any(ord(c) < 32 for c in repo_name)
-        ):
-            raise ValueError("repo_name must be a valid non-empty repository name")
-
-        if (
-            isinstance(pr_id, bool)
-            or not isinstance(pr_id, (int, str))
-            or not str(pr_id).strip()
-        ):
-            raise ValueError("pr_id must be a non-empty string or integer")
-
+        if not isinstance(repo_name, str) or not repo_name.strip():
+            raise ValueError("repo_name must be a non-empty string")
         if not isinstance(author, str) or not author.strip():
             raise ValueError("author must be a non-empty string")
-
-        if not isinstance(title, str) or not title.strip():
-            raise ValueError("title must be a non-empty string")
-
-        if not isinstance(body, str):
-            raise ValueError("body must be a string")
-
-        if not isinstance(files_changed, (list, tuple, set)):
-            raise ValueError("files_changed must be a list, tuple, or set")
-
-        if not all(
-            isinstance(path, str) and path.strip()
-            for path in files_changed
+        if files_changed is None:
+            files_changed = []
+        if not isinstance(files_changed, (list, tuple, set, frozenset)) or not all(
+            isinstance(f, str) for f in files_changed
         ):
-            raise ValueError("All changed file paths must be non-empty strings")
-
+            raise ValueError("files_changed must be a list of file path strings")
         if (
             isinstance(timestamp_epoch, bool)
             or not isinstance(timestamp_epoch, (int, float))
+            or not math.isfinite(timestamp_epoch)
         ):
             raise ValueError("timestamp_epoch must be a finite number")
 
-        try:
-            timestamp = float(timestamp_epoch)
-        except (ValueError, OverflowError):
-            raise ValueError("timestamp_epoch must be a finite number") from None
-
-        if not math.isfinite(timestamp):
-            raise ValueError("timestamp_epoch must be a finite number")
-
-        repo_name = repo_name.strip()
-        author = author.strip()
-
         key = self.make_key(repo_name, pr_id)
-
-        fingerprint = build_fingerprint(
-            title,
-            body,
-            files_changed,
-            self.num_perm,
-            self.shingle_size,
-            self._hash_key
-        )
-
         self._records[key] = _PRRecord(
             key=key,
             repo=repo_name,
             pr_id=pr_id,
             author_hash=self._hash_author(author),
-            timestamp=timestamp,
-            fingerprint=fingerprint
+            timestamp=float(timestamp_epoch),
+            fingerprint=build_fingerprint(
+                title, body, files_changed, self.num_perm, self.shingle_size
+            ),
         )
-
         return key
 
-    def check_pr_campaign(
-        self,
-        pr_id,
-        window_hours=4,
-        similarity_threshold=0.75,
-        min_repos=3
-    ):
+    def check_pr_campaign(self, pr_id, window_hours=4, similarity_threshold=0.75, min_repos=3):
         """
-        Detect similar PRs across distinct repositories within a time window.
+        Is this PR part of a near-identical wave hitting >= min_repos distinct
+        repos inside one sliding window of window_hours?
 
-        The selected cluster must contain the target PR.
+        pr_id may be the full key ("repoA#12") or a bare id if it is unambiguous.
+        Returns: {is_campaign, cluster_size, matching_prs, distinct_repos,
+                  window_hours, similarity_threshold}
         """
-
-        if (
-            isinstance(window_hours, bool)
-            or not isinstance(window_hours, (int, float))
-        ):
-            raise ValueError("window_hours must be a finite positive number")
-
-        try:
-            window_hours = float(window_hours)
-        except (ValueError, OverflowError):
-            raise ValueError("window_hours must be a finite positive number") from None
-
-        if not math.isfinite(window_hours) or window_hours <= 0:
-            raise ValueError("window_hours must be a finite positive number")
-
-        if (
-            isinstance(similarity_threshold, bool)
-            or not isinstance(similarity_threshold, (int, float))
-        ):
-            raise ValueError(
-                "similarity_threshold must be a finite number between 0 and 1"
-            )
-
-        try:
-            similarity_threshold = float(similarity_threshold)
-        except (ValueError, OverflowError):
-            raise ValueError(
-                "similarity_threshold must be a finite number between 0 and 1"
-            ) from None
-
-        if (
-            not math.isfinite(similarity_threshold)
-            or not 0 <= similarity_threshold <= 1
-        ):
-            raise ValueError(
-                "similarity_threshold must be a finite number between 0 and 1"
-            )
-
-        if (
-            not isinstance(min_repos, int)
-            or isinstance(min_repos, bool)
-            or min_repos < 2
-        ):
-            raise ValueError(
-                "min_repos must be an integer greater than or equal to 2"
-            )
-
         target = self._resolve(pr_id)
-
         result = {
             "is_campaign": False,
             "cluster_size": 1 if target else 0,
             "matching_prs": [],
             "distinct_repos": 1 if target else 0,
             "window_hours": window_hours,
-            "similarity_threshold": similarity_threshold
+            "similarity_threshold": similarity_threshold,
         }
-
         if target is None:
             return result
 
         window = window_hours * 3600.0
-
         similar = [
-            record
-            for record in self._records.values()
-            if record.key == target.key
-            or fingerprint_similarity(
-                target.fingerprint,
-                record.fingerprint
-            ) >= similarity_threshold
+            r for r in self._records.values()
+            if r.key == target.key
+            or fingerprint_similarity(target.fingerprint, r.fingerprint) >= similarity_threshold
         ]
 
-        # Candidate windows must contain the target PR.
-        starts = sorted({
-            record.timestamp
-            for record in similar
-            if target.timestamp - window
-            <= record.timestamp
-            <= target.timestamp
-        })
-
+        # Sliding window: try every window [start, start+window] that contains the
+        # target and begins at one of the similar PRs' timestamps; keep the best.
+        starts = [r.timestamp for r in similar
+                  if target.timestamp - window <= r.timestamp <= target.timestamp]
         best = [target]
-        best_start = target.timestamp
-
-        def cluster_score(members, start):
-            distinct_repos = len({record.repo for record in members})
-
-            # Prefer more repositories, then more PRs, then earlier windows.
-            return (
-                distinct_repos,
-                len(members),
-                -start
-            )
-
-        best_score = cluster_score(best, best_start)
-
         for start in starts:
-            members = [
-                record
-                for record in similar
-                if start <= record.timestamp <= start + window
-            ]
-
+            members = [r for r in similar if start <= r.timestamp <= start + window]
             if target not in members:
                 continue
-
-            score = cluster_score(members, start)
-
-            if score > best_score:
+            if len({r.repo for r in members}) > len({r.repo for r in best}):
                 best = members
-                best_start = start
-                best_score = score
 
-        # Sort output to make results deterministic.
-        best = sorted(
-            best,
-            key=lambda record: (record.timestamp, record.key)
-        )
-
-        distinct = len({record.repo for record in best})
-
+        distinct = len({r.repo for r in best})
         result["distinct_repos"] = distinct
         result["cluster_size"] = len(best)
-
-        result["matching_prs"] = sorted(
-            record.key
-            for record in best
-            if record.key != target.key
-        )
-
+        result["matching_prs"] = sorted(r.key for r in best if r.key != target.key)
         result["is_campaign"] = distinct >= min_repos
-
         return result
 
     def _resolve(self, pr_id):
-        """Resolve a full PR key or an unambiguous bare PR ID."""
-
-        if isinstance(pr_id, bool) or not isinstance(pr_id, (str, int)):
-            return None
-
-        if not str(pr_id).strip():
-            return None
-
-        if isinstance(pr_id, str) and pr_id in self._records:
+        if pr_id in self._records:
             return self._records[pr_id]
-
-        matches = [
-            record
-            for record in self._records.values()
-            if str(record.pr_id) == str(pr_id)
-        ]
-
+        matches = [r for r in self._records.values() if str(r.pr_id) == str(pr_id)]
         return matches[0] if len(matches) == 1 else None

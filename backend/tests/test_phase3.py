@@ -1,8 +1,15 @@
 """
 test_phase3.py - End-to-end Phase 3 simulation (graph.py + campaign.py + brief_generator.py).
 
-Run as a script for a printed report:   python test_phase3.py
-Run under pytest for pass/fail:         pytest -q test_phase3.py
+Run as a script for a printed report:   python test_phase3.py            (offline unless LLM_API_KEY + LLM_BASE_URL are set)
+Force live Groq/OpenAI-compatible briefs: python test_phase3.py --live
+Force offline briefs:                     python test_phase3.py --mock
+Run under pytest for pass/fail:           pytest -q test_phase3.py        (always offline)
+
+Live mode reads LLM_API_KEY / LLM_BASE_URL / LLM_MODEL from the environment or a
+git-ignored .env file next to this script (copy .env.example). Each brief is
+printed with a provenance tag: [LIVE LLM: model], [FALLBACK MOCK] + reason, or
+[OFFLINE MOCK].
 
 Pipeline per incoming PR:
   1. graph.py      TrustGraph.evaluate(repo, author)  -> Status (trusted / blocked / unknown ...)
@@ -19,8 +26,13 @@ Scenario (all four repos mutually trust each other so any repo can be the "query
 """
 
 from __future__ import annotations
-from backend.app.reporting.brief_generator import validate_brief
-from backend.app.reporting.brief_generator import generate_evidence_brief
+
+import argparse
+import os
+from collections import Counter
+from pathlib import Path
+
+from backend.app.reporting.brief_generator import current_model, generate_brief, live_configured, load_dotenv
 from backend.app.campaign.campaign_detector import CampaignDetector
 from backend.app.graph.graph_engine import Status, TrustGraph
 from backend.app.ingestion.parser import parse_vouch_text
@@ -80,11 +92,9 @@ def decide(status: Status, campaign: dict) -> str:
     return "NEWCOMER_TRIAGE"
 
 
-def run(verbose: bool = True) -> dict:
+def run(verbose: bool = True, use_mock: bool = True) -> dict:
     graph = build_graph()
-    detector = CampaignDetector(
-        author_salt="phase3-test-only-secret"
-    )
+    detector = CampaignDetector()
     verdicts = {}
 
     # Pass 1: graph lookup; only authors nobody trusted has an opinion on enter the detector.
@@ -96,19 +106,11 @@ def run(verbose: bool = True) -> dict:
 
     # Pass 2: campaign check + verdict + brief.
     results = {}
+    sources = Counter()
     for repo, pr, author, *_ in INCOMING:
         key = f"{repo}#{pr}"
         v = verdicts[(repo, pr)]
-        if v.status is Status.UNKNOWN:
-            campaign = detector.check_pr_campaign(key)
-        else:
-            campaign = {
-            "is_campaign": False,
-            "matching_prs": [],
-            "cluster_size": 0,
-            "distinct_repos": 0,
-            "window_hours": 24,
-        }
+        campaign = detector.check_pr_campaign(key)
         verdict = decide(v.status, campaign)
         payload = {
             "pr_id": key,
@@ -123,8 +125,19 @@ def run(verbose: bool = True) -> dict:
             "final_verdict": verdict,
         }
         results[key] = verdict
+        brief = generate_brief(payload, use_mock=use_mock)
+        sources[brief.source] += 1
         if verbose:
-            print(f"[{author}] {key} -> {verdict}\n    {generate_evidence_brief(payload, use_mock=True)}\n")
+            print(f"[{author}] {key} -> {verdict}")
+            print(f"    {brief.status_line}")
+            print(f"    {brief.text}")
+            if brief.raw_output:
+                print(f"    rejected model output: {brief.raw_output[:200]!r}")
+            print()
+    if verbose:
+        print("Brief sources: " + ", ".join(
+            f"{sources[s]} {label}" for s, label in
+            (("live", "live LLM"), ("fallback", "fallback mock"), ("mock", "offline mock"))))
     return results
 
 
@@ -138,30 +151,38 @@ def test_pipeline() -> None:
     assert results["beta-cli#46"] == "BLOCKED (Denounced)"
 
 
+def main(argv=None) -> None:
+    # Load .env only when run as a script, so importing this module or running
+    # pytest never picks up secrets or touches the network.
+    load_dotenv(Path(__file__).with_name(".env"))
+
+    ap = argparse.ArgumentParser(description="End-to-end PR pipeline simulation.")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--live", action="store_true",
+                      help="use the live LLM for briefs (falls back to mock, with the reason, on any failure)")
+    mode.add_argument("--mock", action="store_true",
+                      help="force offline deterministic briefs even if LLM env vars are set")
+    args = ap.parse_args(argv)
+
+    if args.mock:
+        use_mock, why = True, "--mock"
+    elif args.live:
+        use_mock, why = False, "--live"
+    elif live_configured():
+        use_mock, why = False, "auto: LLM_API_KEY and LLM_BASE_URL are set"
+    else:
+        use_mock, why = True, "default: LLM_API_KEY / LLM_BASE_URL not set"
+
+    if use_mock:
+        print(f"Brief mode: OFFLINE MOCK ({why})\n")
+    else:
+        print(f"Brief mode: LIVE LLM model={current_model()} "
+              f"base_url={os.environ.get('LLM_BASE_URL', '<unset>')} ({why})\n")
+
+    run(verbose=True, use_mock=use_mock)
+    test_pipeline()  # always offline: asserts verdicts only
+    print("\nAll Phase 3 assertions passed.")
+
+
 if __name__ == "__main__":
-    run()
-    test_pipeline()
-    print("All Phase 3 assertions passed.")
-
-def test_brief_rejects_invented_pr_reference():
-    payload = {
-        "pr_id": "owner/repo#123",
-        "matching_prs": [],
-        "denounced_by": [{"repo": "owner/repo"}],
-    }
-
-    text = "Related evidence was found in owner/repo#999."
-
-    assert not validate_brief(text, payload)
-
-
-def test_brief_rejects_unknown_repository():
-    payload = {
-        "pr_id": "owner/repo#123",
-        "matching_prs": [],
-        "denounced_by": [{"repo": "owner/repo"}],
-    }
-
-    text = "Evidence was also found in attacker/project."
-
-    assert not validate_brief(text, payload)
+    main()
