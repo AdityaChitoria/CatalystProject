@@ -38,3 +38,11 @@ ethan
 
 # Denounced
 -mallory repeated suspicious commits
+
+# Unvouched users
+?student_ kabir
+?student_anya
+?student_diya
+?student_kiara
+?student_om
+?student_ritvik

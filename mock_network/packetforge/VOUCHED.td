@@ -39,3 +39,11 @@ adrian
 # Denounced
 -spambot99 malicious payload submissions
 -mallory suspicious activity
+
+# Unvouched users
+?student_ kabir
+?student_avni
+?student_kiara
+?student_reyansh
+?student_saanvi
+?student_ved

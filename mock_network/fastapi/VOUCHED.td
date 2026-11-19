@@ -39,3 +39,11 @@ will
 # Denounced
 -spambot99 automated spam
 -eve repeated low-quality submissions
+
+# Unvouched users
+?student_aryan
+?student_ishaan
+?student_kavya
+?student_nisha
+?student_rahul
+?student_tara

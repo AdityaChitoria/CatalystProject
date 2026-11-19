@@ -39,3 +39,11 @@ ankit
 # Denounced
 -spambot99 AI slop PRs
 -mallory suspicious repeated submissions
+
+# Unvouched users
+?student_aryan
+?student_nisha
+?student_pooja
+?student_rahul
+?student_tara
+?student_vihaan

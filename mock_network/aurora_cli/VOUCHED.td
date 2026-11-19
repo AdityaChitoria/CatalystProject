@@ -38,3 +38,11 @@ karan
 
 # Denounced
 -spambot99 spam submissions
+
+# Unvouched users
+?student_aarav
+?student_ananya
+?student_dev
+?student_karan
+?student_meera
+?student_riya

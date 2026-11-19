@@ -38,3 +38,11 @@ sasha
 
 # Denounced
 -spambot99 suspicious database changes
+
+# Unvouched users
+?student_ishaan
+?student_kavya
+?student_rahul
+?student_rohan
+?student_sara
+?student_tara

@@ -37,3 +37,11 @@ nina_dev
 # Denounced
 -mallory suspicious activity reported
 -spambot99 automated spam
+
+# Unvouched users
+?student_adi
+?student_isha
+?student_krish
+?student_manya
+?student_pooja
+?student_vihaan

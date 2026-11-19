@@ -44,6 +44,7 @@ class ParsedVouchFile:
     vouched: Set[str] = field(default_factory=set)
     # username -> reason (reason may be an empty string)
     denounced: Dict[str, str] = field(default_factory=dict)
+    unvouched: Set[str] = field(default_factory=set)
     # Human-readable notes about malformed lines that were skipped.
     warnings: List[str] = field(default_factory=list)
 
@@ -52,6 +53,7 @@ class ParsedVouchFile:
         return {
             "vouched": sorted(self.vouched),
             "denounced": dict(sorted(self.denounced.items())),
+            "unvouched": sorted(self.unvouched),
             "warnings": list(self.warnings),
         }
 
@@ -93,8 +95,31 @@ def parse_vouch_text(text: str, default_platform: Optional[str] = DEFAULT_PLATFO
             except ValueError as exc:
                 result.warnings.append(f"line {lineno}: {exc}")
                 continue
-            result.vouched.discard(user)  # last entry wins
+            result.vouched.discard(user)
+            result.unvouched.discard(user)
             result.denounced[user] = reason
+            continue
+
+        # ---- Unvouched entry: "?username" -------------------------------
+        if line.startswith("?"):
+            body = line[1:].strip()
+            tokens = body.split()
+
+            if not tokens:
+                result.warnings.append(
+                    f"line {lineno}: bare '?' with no username"
+                )
+                continue
+
+            try:
+                user = normalize_username(tokens[0], default_platform)
+            except ValueError as exc:
+                result.warnings.append(f"line {lineno}: {exc}")
+                continue
+
+            result.vouched.discard(user)
+            result.denounced.pop(user, None)
+            result.unvouched.add(user)
             continue
 
         # ---- Vouched entry: a single username --------------------------------
@@ -108,7 +133,8 @@ def parse_vouch_text(text: str, default_platform: Optional[str] = DEFAULT_PLATFO
         except ValueError as exc:
             result.warnings.append(f"line {lineno}: {exc}")
             continue
-        result.denounced.pop(user, None)  # last entry wins
+        result.denounced.pop(user, None)
+        result.unvouched.discard(user)
         result.vouched.add(user)
 
     return result
