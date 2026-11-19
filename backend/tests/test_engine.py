@@ -17,7 +17,7 @@ Sybils are 3 hops away (A->D->H->fake) so they get exactly 0.
 """
 
 from __future__ import annotations
-
+import pytest
 from backend.app.graph.graph_engine import Status, TrustGraph
 from backend.app.ingestion.parser import parse_vouch_text
 
@@ -78,7 +78,7 @@ EXPECTED = {
     "alice": (Status.WARNING, "vouched by B; smeared by hostile H + 50 sybils -> only a warning"),
     "bob": (Status.TRUSTED, "vouched by C at 2 hops (0.28)"),
     "spambot99": (Status.BLOCKED, "denounced by highly trusted B"),
-    "carol": (Status.BLOCKED, "denounced by D and C -> corroborated"),
+    "carol": (Status.WARNING, "denounced by D and C -> no verified independence"),
     "dana": (Status.WARNING, "denounced by D alone -> isolated"),
     "mallory": (Status.BLOCKED, "A denounces locally even though B vouches"),
     "erin": (Status.TRUSTED, "A vouches locally; B vouch is irrelevant"),
@@ -104,6 +104,33 @@ def test_contributor_verdicts() -> None:
         v = g.evaluate("ProjectA", user)
         assert v.status == expected, f"{user}: got {v.status}, expected {expected}"
     assert g.evaluate("ProjectA", "sybil_shill").vouch_score == 0.0
+
+def test_multiple_moderate_denouncers_do_not_block() -> None:
+    g = TrustGraph()
+
+    g.add_project("QueryProject", parse_vouch_text(""))
+    g.add_project("DenouncerA", parse_vouch_text("-alice Spam"))
+    g.add_project("DenouncerB", parse_vouch_text("-alice Suspicious"))
+
+    g.add_trust_edge("QueryProject", "DenouncerA", 0.4)
+    g.add_trust_edge("QueryProject", "DenouncerB", 0.5)
+
+    verdict = g.evaluate("QueryProject", "alice")
+
+    assert verdict.status == Status.WARNING
+
+
+def test_single_high_trust_denouncer_blocks() -> None:
+    g = TrustGraph()
+
+    g.add_project("QueryProject", parse_vouch_text(""))
+    g.add_project("TrustedProject", parse_vouch_text("-alice Spam"))
+
+    g.add_trust_edge("QueryProject", "TrustedProject", 0.8)
+
+    verdict = g.evaluate("QueryProject", "alice")
+
+    assert verdict.status == Status.BLOCKED    
 
 
 def main() -> None:
@@ -131,3 +158,52 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+@pytest.mark.parametrize(
+    "weight",
+    [
+        True,
+        False,
+        "0.5",
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        0,
+        -0.5,
+        1.5,
+    ],
+)
+def test_invalid_trust_weights_rejected(weight) -> None:
+    g = TrustGraph()
+
+    with pytest.raises(ValueError):
+        g.add_trust_edge("ProjectA", "ProjectB", weight)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "   ",
+        None,
+        123,
+    ],
+)
+def test_invalid_project_names_rejected(name) -> None:
+    g = TrustGraph()
+
+    with pytest.raises(ValueError):
+        g.add_trust_edge(name, "ProjectB", 0.5)
+
+    with pytest.raises(ValueError):
+        g.add_trust_edge("ProjectA", name, 0.5)
+
+
+def test_valid_trust_weight_boundaries() -> None:
+    g = TrustGraph()
+
+    g.add_trust_edge("ProjectA", "ProjectB", 0.01)
+    g.add_trust_edge("ProjectA", "ProjectC", 1.0)
+
+    assert g._edges["ProjectA"]["ProjectB"] == 0.01
+    assert g._edges["ProjectA"]["ProjectC"] == 1.0

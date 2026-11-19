@@ -47,9 +47,9 @@ Business rules implemented
 
 Everything here is plain arithmetic - no randomness, no ML, no network.
 """
-
+ 
 from __future__ import annotations
-
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -78,9 +78,53 @@ class TrustConfig:
     local_vouch_overrides: bool = True      # seed's own vouch beats remote denouncements
 
     def __post_init__(self) -> None:
-        if not 0.0 <= self.damping <= 1.0:
-            raise ValueError("damping must be within [0, 1]")
-        object.__setattr__(self, "max_hops", max(0, min(self.max_hops, HARD_MAX_HOPS)))
+
+        # Validate max_hops
+        if (
+            not isinstance(self.max_hops, int)
+            or isinstance(self.max_hops, bool)
+        ):
+            raise ValueError("max_hops must be an integer")
+
+        object.__setattr__(
+            self,
+            "max_hops",
+            max(0, min(self.max_hops, HARD_MAX_HOPS))
+        )
+
+        # Validate probability and trust thresholds
+        thresholds = {
+            "damping": self.damping,
+            "trusted_threshold": self.trusted_threshold,
+            "block_trust": self.block_trust,
+            "corroboration_min_trust": self.corroboration_min_trust,
+            "corroboration_combined": self.corroboration_combined,
+        }
+
+        for name, value in thresholds.items():
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+                or not 0.0 <= value <= 1.0
+            ):
+                raise ValueError(
+                    f"{name} must be a finite number between 0 and 1"
+                )
+
+        # Validate corroboration count
+        if (
+            not isinstance(self.corroboration_min_count, int)
+            or isinstance(self.corroboration_min_count, bool)
+            or self.corroboration_min_count < 1
+        ):
+            raise ValueError(
+                "corroboration_min_count must be a positive integer"
+            )
+
+        # Validate local sovereignty setting
+        if not isinstance(self.local_vouch_overrides, bool):
+            raise ValueError("local_vouch_overrides must be a boolean")
 
 
 class Status(str, Enum):
@@ -149,14 +193,38 @@ class TrustGraph:
             self._files[name] = vouch_file
 
     def add_trust_edge(self, src: str, dst: str, weight: float) -> None:
-        """Declare that `src` trusts `dst` at `weight` in (0, 1]."""
-        if not 0.0 < weight <= 1.0:
-            raise ValueError(f"trust weight must be in (0, 1], got {weight}")
+        """Declare that src trusts dst at a finite weight in (0, 1]."""
+
+        # Validate project names
+        if not isinstance(src, str) or not src.strip():
+            raise ValueError("src must be a non-empty string")
+
+        if not isinstance(dst, str) or not dst.strip():
+            raise ValueError("dst must be a non-empty string")
+
+        # Validate weight type
+        if (
+            not isinstance(weight, (int, float))
+            or isinstance(weight, bool)
+        ):
+            raise ValueError("trust weight must be a number")
+
+        # Reject NaN, infinity, zero, negative and values above 1
+        if not math.isfinite(weight) or not 0.0 < weight <= 1.0:
+            raise ValueError(
+                f"trust weight must be finite and in (0, 1], got {weight}"
+            )
+
+        src = src.strip()
+        dst = dst.strip()
+
         if src == dst:
             return  # self-trust is implicit; ignore self loops
+
         self.add_project(src)
         self.add_project(dst)
-        self._edges[src][dst] = weight
+
+        self._edges[src][dst] = float(weight)
 
     # ---- project-level trust (personalised, local) --------------------------
     def project_trust(self, seeds: Iterable[str]) -> Dict[str, float]:
@@ -226,8 +294,13 @@ class TrustGraph:
         denounce_score = _noisy_or(e.trust for e in denouncements)
         blocked, block_reason = self._block_decision(denouncements)
 
-        local_vouch = any(e.project in seeds for e in vouches)
-        local_denounce = any(e.project in seeds for e in denouncements)
+        local_vouch = any(
+            e.project == querying_project for e in vouches
+        )
+
+        local_denounce = any(
+            e.project == querying_project for e in denouncements
+        )
 
         if cfg.local_vouch_overrides and local_vouch and not local_denounce:
             status = Status.TRUSTED
@@ -266,19 +339,28 @@ class TrustGraph:
 
     # ---- corroboration logic ------------------------------------------------
     def _block_decision(self, denouncements: List[Evidence]) -> Tuple[bool, str]:
+        """
+        Block only when at least one individual denouncer
+        meets the single-source trust threshold.
+
+        Multiple denouncements are preserved as evidence,
+        but are not automatically treated as independent.
+        """
+
         cfg = self.config
+
         if not denouncements:
             return False, ""
 
-        top = denouncements[0]  # sorted by trust desc
-        if top.trust >= cfg.block_trust:
-            return True, f"denounced by highly trusted '{top.project}' (trust {top.trust:.2f})"
+        # A single sufficiently trusted source can trigger a block.
+        top = denouncements[0]
 
-        credible = [d for d in denouncements if d.trust >= cfg.corroboration_min_trust]
-        if len(credible) >= cfg.corroboration_min_count:
-            combined = _noisy_or(d.trust for d in credible)
-            if combined >= cfg.corroboration_combined:
-                names = ", ".join(d.project for d in credible)
-                return True, (f"denouncement corroborated by {len(credible)} credible projects "
-                              f"({names}); combined weight {combined:.2f}")
+        if top.trust >= cfg.block_trust:
+            return True, (
+                f"denounced by highly trusted '{top.project}' "
+                f"(trust {top.trust:.2f})"
+            )
+
+        # Multiple sources cannot trigger a block because
+        # their independence has not yet been established.
         return False, ""
