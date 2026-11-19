@@ -1,34 +1,39 @@
 # CatalystProject
 ### Decentralized Contributor Trust Network
 
-CatalystProject is a decentralized contributor trust network designed to evaluate contributors using evidence shared by different projects.
+CatalystProject is an evidence-based, decentralized contributor trust network designed to evaluate contributors using information shared across independent projects.
 
-Instead of relying on a single global reputation score, each project calculates contributor trust from its own network of trusted projects.
+Instead of relying on a single global reputation score, each project evaluates contributors from its own perspective using trusted project relationships, positive evidence (vouches), negative evidence (denouncements), and coordinated campaign signals.
 
-The system considers positive evidence (vouches), negative evidence (denouncements), project trust relationships, and corroboration before making decisions.
+The system aims to make contributor trust more transparent, resistant to Sybil attacks, and less vulnerable to malicious or unsupported accusations.
 
 ---
 
 ## 1. Project Objectives
 
-The main objectives of CatalystProject are:
-
 - Build a decentralized, project-specific trust network.
 - Calculate transitive trust between projects.
-- Reduce Sybil attacks involving fake repositories and artificial reputation.
-- Prevent malicious or unsupported denouncements from automatically blocking contributors.
+- Reduce Sybil attacks and artificial reputation manipulation.
 - Evaluate contributors using evidence rather than simple vote counts.
-- Maintain local project authority over contributor decisions.
+- Prevent unsupported denouncements from automatically blocking contributors.
+- Preserve local project authority over contributor decisions.
+- Detect potentially coordinated malicious contribution campaigns.
+- Generate concise evidence-based explanations for trust decisions.
 
-## 2. Current Technology
+---
+
+## 2. Technology Stack
 
 | Technology | Purpose |
 |---|---|
-| Python | Core trust engine and data processing |
+| Python | Core backend logic |
 | Pytest | Automated testing |
 | Git | Version control |
 | VOUCHED.td | Contributor evidence format |
-| TRUSTED_PROJECTS.td | Project-to-project trust relationships |
+| TRUSTED_PROJECTS.td | Project trust relationships |
+| OpenAI-compatible LLM API | Optional evidence brief generation |
+
+---
 
 ## 3. Project Structure
 
@@ -37,49 +42,52 @@ CatalystProject/
 │
 ├── backend/
 │   ├── app/
+│   │   ├── campaign/
+│   │   │   └── campaign_detector.py
+│   │   │
 │   │   ├── graph/
 │   │   │   └── graph_engine.py
 │   │   │
-│   │   └── ingestion/
-│   │       └── parser.py
+│   │   ├── ingestion/
+│   │   │   ├── parser.py
+│   │   │   └── network_loader.py
+│   │   │
+│   │   └── reporting/
+│   │       └── brief_generator.py
 │   │
 │   └── tests/
-│       └── test_engine.py
+│       ├── test_engine.py
+│       ├── test_network_loader.py
+│       ├── test_campaign_detector.py
+│       ├── test_brief_generator.py
+│       └── test_phase3.py
 │
 ├── data/
 │   └── fixtures/
-│       └── sample.VOUCHED.td
 │
 ├── docs/
 │
 ├── mock_network/
 │   ├── ghostty/
-│   │   ├── VOUCHED.td
-│   │   └── TRUSTED_PROJECTS.td
-│   │
 │   ├── fastapi/
-│   │   ├── VOUCHED.td
-│   │   └── TRUSTED_PROJECTS.td
-│   │
 │   ├── hostile_project/
-│   │   ├── VOUCHED.td
-│   │   └── TRUSTED_PROJECTS.td
-│   │
 │   └── my_project/
-│       ├── VOUCHED.td
-│       └── TRUSTED_PROJECTS.td
 │
 ├── .gitignore
 └── README.md
 ```
 
+---
+
 ## 4. Core Components
 
-### A. Data Ingestion — `parser.py`
+### A. Data Ingestion
 
-The parser processes VOUCHED.td files containing contributor vouches and denouncements.
+**Files:** `parser.py`, `network_loader.py`
 
-Supported examples:
+The ingestion module processes project evidence files and trust relationships.
+
+Supported contributor evidence examples:
 
 ```text
 # Positive evidence
@@ -92,27 +100,32 @@ github:mitchellh
 ```
 
 Features:
+
 - Parses positive and negative evidence.
 - Supports platform-specific identities.
-- Normalizes usernames.
+- Normalizes contributor usernames.
 - Handles duplicate entries.
-- Ignores comments and malformed entries with warnings.
+- Ignores comments.
+- Reports malformed entries through warnings.
+- Loads project network information for trust graph construction.
 
-Main functions:
+Main parser functions:
 
 - `parse_vouch_text()`
 - `parse_vouch_file()`
 - `normalize_username()`
 
-### B. Trust Graph Engine — `graph_engine.py`
+### B. Trust Graph Engine
 
-The trust engine calculates trust relationships between projects and evaluates contributors from an individual project's perspective.
+**File:** `graph_engine.py`
+
+The trust engine calculates project-to-project trust and evaluates contributors from an individual project's perspective.
 
 **Transitive Trust and Hop Decay**
 
 Trust propagates through connected projects with a damping factor.
 
-For example:
+Example:
 
 ```text
 Project A --0.8--> Project B --0.7--> Project C
@@ -126,27 +139,31 @@ Trust(A, C) = 0.8 × 0.7 × 0.5
 Trust(A, C) = 0.28
 ```
 
-The current implementation limits propagation to a maximum of two hops and selects the strongest available path.
+The engine supports bounded graph traversal and selects the strongest available path.
 
 **Sybil Resistance**
 
-Trust is calculated starting from the querying project's trusted seed network.
+Trust propagates outward from the querying project's trusted seed network.
 
-Projects without a valid trust path receive zero influence, preventing isolated fake project networks from creating artificial reputation.
+Disconnected or untrusted project networks cannot create influence merely by generating artificial trust relationships among themselves.
 
-**Denouncement Corroboration**
+**Denouncement Handling**
 
-The engine distinguishes between isolated denouncements and sufficiently supported negative evidence.
+The engine distinguishes between isolated accusations and sufficiently supported negative evidence.
 
-Current default rules include:
+Current behaviour includes:
 
-- A highly trusted denouncer can trigger a block.
-- Multiple sufficiently trusted, distinct denouncers can trigger a block through corroboration.
-- An isolated low-trust denouncement produces a warning rather than an automatic block.
+- Highly trusted denouncers can trigger blocking decisions.
+- Weak isolated denouncements produce warnings.
+- Multiple denouncements are preserved as evidence.
+- Corroboration is handled conservatively when source independence is uncertain.
+- Uncertainty alone is not treated as negative evidence.
 
 **Local Project Authority**
 
-A project's own direct vouch can override remote denouncements, unless the project itself has denounced the contributor.
+Projects retain authority over their own contributor decisions.
+
+A local vouch can take precedence over remote denouncements, while a direct local denouncement retains local blocking authority.
 
 Main components:
 
@@ -159,72 +176,148 @@ Main components:
 - `evaluate()`
 - `evaluate_many()`
 
-## 5. Current Contributor Statuses
+### C. Campaign Detection
 
-The engine currently supports five statuses:
+**File:** `campaign_detector.py`
+
+The campaign detector identifies potentially coordinated pull-request activity across repositories.
+
+Features include:
+
+- Text normalization.
+- File-path normalization.
+- Character-shingle fingerprinting.
+- MinHash-based similarity estimation.
+- Similarity comparison across pull requests.
+- Time-window-based campaign detection.
+- Cross-repository matching.
+- Salted author pseudonymization.
+- Reduced storage of raw pull-request content.
+
+Campaign detection provides additional evidence for review. A similarity match alone does not prove malicious intent.
+
+### D. Evidence Brief Generation
+
+**File:** `brief_generator.py`
+
+This module generates concise explanations of already-computed trust decisions.
+
+Features:
+
+- Deterministic mock evidence briefs.
+- Optional OpenAI-compatible LLM integration.
+- Neutral, evidence-based summaries.
+- Validation against supplied evidence.
+- Rejection of unsupported references.
+- Deterministic fallback when LLM configuration is missing or generation fails.
+
+**Important design principle:**
+
+The LLM does not calculate trust, classify contributors, or decide whether a contributor should be blocked.
+
+Trust decisions are computed by the deterministic backend. The LLM is used only as an optional summarization component.
+
+### E. Integration Testing
+
+**File:** `test_phase3.py`
+
+The integration tests exercise interactions between the trust graph, campaign detector, contributor evidence, and evidence brief generator.
+
+Scenarios include:
+
+- Coordinated activity across multiple repositories.
+- New contributor handling.
+- Trusted contributor facing a weak accusation.
+- Local project denouncement.
+- Rejection of invented pull-request references.
+- Rejection of unsupported repository references.
+
+---
+
+## 5. Contributor Statuses
+
+The trust engine currently supports five statuses:
 
 | Status | Meaning |
 |---|---|
-| TRUSTED | Sufficient positive evidence |
+| TRUSTED | Sufficient positive trust evidence |
 | LOW_TRUST | Positive evidence exists but is weak |
 | WARNING | Negative evidence exists but does not meet blocking requirements |
-| BLOCKED | Denouncement meets blocking requirements |
-| UNKNOWN | No trusted project has an opinion |
+| BLOCKED | Evidence meets the blocking requirements |
+| UNKNOWN | Insufficient trusted evidence to make a decision |
 
-These statuses represent the current implementation and may be refined as the project develops.
+These statuses are intended to distinguish established trust, insufficient evidence, and supported negative evidence.
+
+---
 
 ## 6. Testing
 
-Automated tests are implemented using Pytest.
+The project uses Pytest for unit and integration testing.
 
-The current test suite checks:
+Activate the virtual environment:
 
-1. Transitive trust calculations.
-2. Hop decay.
-3. Sybil network isolation.
-4. Contributor reputation evaluation.
+```powershell
+.venv\Scripts\Activate.ps1
+```
 
-Run the tests from the repository root:
+Run the complete test suite:
+
+```powershell
+python -m pytest backend/tests/ -v
+```
+
+Run individual test modules:
 
 ```powershell
 python -m pytest backend/tests/test_engine.py -v
 ```
 
-**Current test result:**
-
-```text
-2 passed in 0.06s
+```powershell
+python -m pytest backend/tests/test_network_loader.py -v
 ```
 
-Both existing automated tests passed successfully.
+```powershell
+python -m pytest backend/tests/test_campaign_detector.py -v
+```
+
+```powershell
+python -m pytest backend/tests/test_brief_generator.py -v
+```
+
+Run the Phase 3 integration test:
+
+```powershell
+python -m backend.tests.test_phase3
+```
+
+---
 
 ## 7. Mock Network
 
-A mock network has been created to simulate relationships between independent projects.
+The project includes a mock network for testing relationships between independent projects.
 
-Current projects:
+Example projects:
 
-| Project | Trust from my_project |
-|---|---:|
-| ghostty | 0.9 |
-| fastapi | 0.7 |
-| hostile_project | 0.2 |
-| my_project | Local project |
+- ghostty
+- fastapi
+- hostile_project
+- my_project
 
 The mock network contains:
 
-- Ghostty vouches for Alice and Bob.
-- Ghostty denounces spambot99.
-- Hostile Project maliciously denounces Alice.
-- My Project defines trust relationships with the other projects.
+- Positive contributor evidence.
+- Negative contributor evidence.
+- Project-to-project trust relationships.
+- Potentially malicious denouncements.
+- Scenarios for testing local project authority.
 
-The mock network is intended to test whether strong positive evidence can withstand an isolated malicious denouncement from a low-trust project.
+The mock network helps test whether the trust engine can distinguish reliable evidence from weak or potentially malicious claims.
 
-**Implementation status:** The mock files have been created, but automatic loading of these directories into the TrustGraph is still pending.
+---
 
 ## 8. Development Setup
 
-Clone the repository and enter its directory:
+Clone the repository:
 
 ```powershell
 git clone <repository-url>
@@ -243,7 +336,7 @@ Activate it:
 .venv\Scripts\Activate.ps1
 ```
 
-Install testing dependency:
+Install testing dependencies:
 
 ```powershell
 python -m pip install pytest
@@ -252,45 +345,72 @@ python -m pip install pytest
 Run the tests:
 
 ```powershell
-python -m pytest backend/tests/test_engine.py -v
+python -m pytest backend/tests/ -v
 ```
+
+### Optional Environment Configuration
+
+Campaign detection can use a secret salt:
+
+```text
+CAMPAIGN_AUTHOR_SALT=your-secret-value
+```
+
+Optional LLM configuration:
+
+```text
+LLM_API_KEY=your-api-key
+LLM_BASE_URL=your-api-base-url
+LLM_MODEL=your-model-name
+```
+
+Keep secrets in a local `.env` file or environment variables. Never commit API keys or secrets to GitHub.
+
+---
 
 ## 9. Current Development Progress
 
-### Completed
+### Implemented
 
 - Initial repository structure.
-- Python virtual environment setup.
-- VOUCHED.td parser.
-- Contributor evidence representation.
-- Transitive trust graph engine.
+- Contributor evidence parser.
+- Project network loader.
+- Transitive trust graph.
 - Hop decay and bounded graph traversal.
-- Sybil isolation logic.
-- Denouncement corroboration.
-- Contributor evaluation and status classification.
-- Initial automated test suite.
-- Mock network directory and sample data.
+- Sybil resistance logic.
+- Conservative denouncement handling.
+- Local project authority.
+- Contributor status classification.
+- Campaign detection.
+- Pull-request similarity fingerprinting.
+- Evidence brief generation.
+- Optional LLM integration with deterministic fallback.
+- Unit and integration tests.
 
-### In Progress / Upcoming
+### Remaining Development
 
-- Automatic loading of mock project directories.
-- Parsing TRUSTED_PROJECTS.td files.
-- Integrating mock network data with TrustGraph.
-- Testing Alice, Bob, and spambot99 using actual mock files.
-- Expanding adversarial test scenarios.
-- Refining evidence independence and reputation classification.
+- FastAPI backend and API endpoints.
+- GitHub API integration.
+- Persistent database integration.
+- Frontend dashboard.
+- Trust graph visualization.
+- Complete end-to-end integration.
+- Additional security and adversarial testing.
+
+---
 
 ## 10. Future Development
 
 Planned improvements include:
 
-- GitHub API integration.
-- Automated repository data ingestion.
-- Backend API development using FastAPI.
-- Persistent storage using PostgreSQL.
-- Improved Sybil and coordinated attack detection.
-- Frontend dashboard and trust graph visualization.
-- Evidence provenance and contributor transparency.
+- Automated GitHub repository ingestion.
+- FastAPI-based backend services.
+- PostgreSQL persistence.
+- Interactive contributor reputation dashboard.
+- Trust network visualization.
+- Improved evidence independence and provenance.
+- Additional Sybil and coordinated attack resistance.
+- Expanded security and integration testing.
 
 ---
 
