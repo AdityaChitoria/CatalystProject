@@ -1,4 +1,7 @@
-# Format: project_name weight
-ghostty 0.9
-fastapi 0.7
-hostile_project 0.2
+# Trusted projects
+ghostty 0.90
+fastapi 0.70
+hostile_project 0.20
+aurora_cli 0.75
+nebula_ui 0.65
+packetforge 0.60
