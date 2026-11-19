@@ -5,3 +5,9 @@ hostile_project 0.20
 aurora_cli 0.75
 nebula_ui 0.65
 packetforge 0.60
+
+# Additional trust relationships
+dataloom 0.55
+emberdb 0.45
+securepipe 0.50
+cloudnest 0.35
